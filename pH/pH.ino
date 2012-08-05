@@ -1,28 +1,7 @@
 #include <SoftwareSerial.h>
 #include <avr/pgmspace.h>
 
-#define USBbaud 9600
-#define GSMbaud 9600
-#define pHbaud  38400
-
-#define pHrxPin 11
-#define pHtxPin 3
-
-#define GSMtxPin 8
-#define GSMrxPin 7
-
-#define GSMpowerPin 9
-#define GSMgpioPin 13
-
-// Analog input pin to which VBAT is attached
-#define analogInPin 0
-
-#define pHBufferLength 16
-
-SoftwareSerial pHSerial(  pHrxPin,  pHtxPin  );
-SoftwareSerial GSMSerial( GSMrxPin, GSMtxPin );
-
-// stick strings into PROGMEM
+// place all message strings into PROGMEM
 prog_char boot_message[]              PROGMEM = "Russell\'s pH meter\n\n";
 prog_char boot_ph_firmware_message[]  PROGMEM = "pH stamp firmware version : ";
 prog_char run_reading_message[]       PROGMEM = "taking reading...";
@@ -47,7 +26,7 @@ prog_char batt_volt_str_2[]           PROGMEM = ", voltage = ";
 prog_char sms_str_1[]                 PROGMEM = "The latest pH measurement is ";
 prog_char sms_str_2[]                 PROGMEM = ", battery voltage ";
 
-// string table
+// table of pointers to back to strings in PROGMEM
 const char *string_table[] PROGMEM = {
   boot_message,              // string 0
   boot_ph_firmware_message,  // string 1
@@ -74,6 +53,7 @@ const char *string_table[] PROGMEM = {
   sms_str_2,                 // string 18
 };
 
+// macros for accessing pointers from the PROGMEM string lookup table
 #define _boot_message              0
 #define _boot_ph_firmware_message  1
 #define _run_reading_message       2
@@ -98,21 +78,53 @@ const char *string_table[] PROGMEM = {
 #define _sms_str_1                 17
 #define _sms_str_2                 18
 
+// buffer for holding strings copied out of PROGMEM
 char buffer[64]; // buffer for string table
 
-// battery charger circuit stuff
-int       BatteryValue  = 0;    // value read from the VBAT pin
-float     outputValue   = 0;    // variable for voltage calculation
-char      voltstring[5];        // charbuf for text voltage output
+// baud rates of attached devices
+#define USBbaud 9600
+#define GSMbaud 9600
+#define pHbaud  38400
 
-String SMSmessage;              // SMS message object
+// pH stamp RX/TX are on digital pins 11 and 3
+#define pHrxPin 11
+#define pHtxPin 3
 
+// GSM module RX/TX are on digital pins 7 nad 8 
+#define GSMrxPin 7
+#define GSMtxPin 8
+
+// GSM module soft power switch is on pin 9
+#define GSMpowerPin 9
+
+// GSM module GPIO power (for power state sensing) is 
+// on digital pin 13
+#define GSMgpioPin 13
+
+// Analog input pin to which VBAT is attached
+#define analogInPin 0
+
+// pH string buffer 
+#define pHBufferLength 16
 char pHBuffer[pHBufferLength];  // string buffer for pH stamp
 char pHInChar = -1;             // char buffer for pH stamp
 byte pHIndex  = 0;              // buffer indes for pH stamp
 float pH      = 0;              // pH value
 
-int i = 0;
+// initialize the SoftwareSerial lines
+SoftwareSerial pHSerial(  pHrxPin,  pHtxPin  );
+SoftwareSerial GSMSerial( GSMrxPin, GSMtxPin );
+
+// battery charger circuit variables
+int       BatteryValue  = 0;    // value read from the VBAT pin
+float     outputValue   = 0;    // variable for voltage calculation
+char      voltstring[5];        // charbuf for text voltage output
+
+// the SMS string
+String SMSmessage;              // SMS message object
+
+// a counter variable for counting stuff
+byte i = 0;
 
 // pull strings out of the PROGMEM string table and return them
 // bs stands for "buffer string," I swear.
@@ -121,7 +133,9 @@ char* bs( int strnum ) {
   return buffer;
 }
 
-void readpH() {  
+// take a reading from the pH stamp
+// result stored in pH and pHbuffer
+void readpH() {
   pHSerial.listen();
   delay(10);
   pHSerial.print( "23.24\r" );
@@ -140,6 +154,18 @@ void readpH() {
     }
   }
   pH = atof(pHBuffer);
+}
+
+// turn the pH stamp LED on
+void pHledON() {
+  pHSerial.listen();
+  pHSerial.print( "l1\r" );    // turn the LED on
+}
+
+// turn the pH stamp LED off
+void pHledOFF() {
+  pHSerial.listen();
+  pHSerial.print( "l0\r" );    // turn the LED off
 }
 
 // relay GSM conversation to the USB console
@@ -198,6 +224,7 @@ void GSMoff() {
   outGSM();
 }
 
+// send an SMS message
 void sms( String message ) {
   
   Serial.println( bs( _SMS_sending_message ) );
@@ -247,14 +274,8 @@ void setup() {
     Serial.print( (char)pHSerial.read() );
   }
   Serial.println();
-  pHSerial.print( "l0\r" );    // turn the LED off
-  delay( 1000 );
-  pHSerial.print( "l1\r" );    // turn the LED on
-  delay( 1000 );
-  pHSerial.print( "l0\r" );    // turn the LED off
-  delay( 1000 );
-  pHSerial.print( "l1\r" );    // turn the LED on
-  
+  pHledOFF();                    // turn off pH diagnostic LED
+
   // boot up the GSM modem to print diagnostics
   GSMon();
   GSMoff();
@@ -266,8 +287,10 @@ void loop() {
   delay(100);
 
   // take a pH reading
+  pHledON();
   readpH();
-  
+  pHledOFF();  
+
   // read the analog in value:
   BatteryValue = analogRead( analogInPin );       
   // Calculate the battery voltage value
