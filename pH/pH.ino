@@ -26,6 +26,9 @@ prog_char batt_volt_str_2[]           PROGMEM = ", voltage = ";
 prog_char sms_str_1[]                 PROGMEM = "The latest pH measurement is ";
 prog_char sms_str_2[]                 PROGMEM = ", battery voltage ";
 
+prog_char temp_str_1[]                PROGMEM = ", temp ";
+prog_char temp_str_2[]                PROGMEM = " C";
+
 // table of pointers to back to strings in PROGMEM
 const char *string_table[] PROGMEM = {
   boot_message,              // string 0
@@ -51,6 +54,9 @@ const char *string_table[] PROGMEM = {
 
   sms_str_1,                 // string 17
   sms_str_2,                 // string 18
+  
+  temp_str_1,                // string 19
+  temp_str_2,                // string 20
 };
 
 // macros for accessing pointers from the PROGMEM string lookup table
@@ -77,6 +83,9 @@ const char *string_table[] PROGMEM = {
 
 #define _sms_str_1                 17
 #define _sms_str_2                 18
+
+#define _temp_str_1                19
+#define _temp_str_2                20
 
 // buffer for holding strings copied out of PROGMEM
 char buffer[64]; // buffer for string table
@@ -111,6 +120,25 @@ char pHInChar = -1;             // char buffer for pH stamp
 byte pHIndex  = 0;              // buffer indes for pH stamp
 float pH      = 0;              // pH value
 
+// thermistor constants
+// which analog pin to connect
+#define THERMISTORPIN A1         
+// resistance at 25 degrees C
+#define THERMISTORNOMINAL 10000      
+// temp. for nominal resistance (almost always 25 C)
+#define TEMPERATURENOMINAL 25   
+// how many samples to take and average, more takes longer
+// but is more 'smooth'
+#define NUMSAMPLES 5
+// The beta coefficient of the thermistor (usually 3000-4000)
+#define BCOEFFICIENT 3950
+// the value of the 'other' resistor
+#define SERIESRESISTOR 10000
+
+int       t_samples[NUMSAMPLES]; // vector for holding subsamples
+char      t_str[5];              // string output for temperature
+float     t_output = 0;          // output value for temperature
+
 // initialize the SoftwareSerial lines
 SoftwareSerial pHSerial(  pHrxPin,  pHtxPin  );
 SoftwareSerial GSMSerial( GSMrxPin, GSMtxPin );
@@ -120,8 +148,10 @@ int       BatteryValue  = 0;    // value read from the VBAT pin
 float     outputValue   = 0;    // variable for voltage calculation
 char      voltstring[5];        // charbuf for text voltage output
 
-// the SMS string
+// string objects
 String SMSmessage;              // SMS message object
+String VoltString;              // Voltage message object
+String TempString;              // Temperature message object
 
 // a counter variable for counting stuff
 byte i = 0;
@@ -166,6 +196,45 @@ void pHledON() {
 void pHledOFF() {
   pHSerial.listen();
   pHSerial.print( "l0\r" );    // turn the LED off
+}
+
+// measure temperature
+// borrowed from : http://learn.adafruit.com/thermistor/using-a-thermistor
+float getTemp() {
+  uint8_t i;
+  float average;
+ 
+  // take N samples in a row, with a slight delay
+  for (i=0; i< NUMSAMPLES; i++) {
+   t_samples[i] = analogRead(THERMISTORPIN);
+   delay(10);
+  }
+ 
+  // average all the samples out
+  average = 0;
+  for (i=0; i< NUMSAMPLES; i++) {
+     average += t_samples[i];
+  }
+  average /= NUMSAMPLES;
+ 
+  Serial.print("Average analog reading "); 
+  Serial.println(average);
+ 
+  // convert the value to resistance
+  average = 1023 / average - 1;
+  average = SERIESRESISTOR / average;
+  Serial.print("Thermistor resistance "); 
+  Serial.println(average);
+  
+  float steinhart;
+  steinhart = average / THERMISTORNOMINAL;     // (R/Ro)
+  steinhart = log(steinhart);                  // ln(R/Ro)
+  steinhart /= BCOEFFICIENT;                   // 1/B * ln(R/Ro)
+  steinhart += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
+  steinhart = 1.0 / steinhart;                 // Invert
+  steinhart -= 273.15;                         // convert to C
+
+  return (steinhart);
 }
 
 // relay GSM conversation to the USB console
@@ -244,7 +313,7 @@ void sms( String message ) {
   delay(1200);
   outGSM();
   GSMSerial.print( message );                      // the message body
-  delay(200);
+  delay(3000);
   outGSM();
   GSMSerial.write(26);                             // send ctrl-Z
   delay(3000);
@@ -254,6 +323,9 @@ void sms( String message ) {
 
 void setup() {
 
+  // set external reference voltage for more stable amalog mesusrements
+  analogReference(EXTERNAL);
+  
   // the 2.8v pin on the SIM900 GPIO is used to detect
   // when the GSM module is powered on
   pinMode( GSMgpioPin, INPUT);
@@ -277,8 +349,8 @@ void setup() {
   pHledOFF();                    // turn off pH diagnostic LED
 
   // boot up the GSM modem to print diagnostics
-  GSMon();
-  GSMoff();
+  //GSMon();
+  //GSMoff();
 }
 
 void loop() {
@@ -302,14 +374,23 @@ void loop() {
   Serial.println( outputValue );
   
   dtostrf( outputValue, 4, 2, voltstring );
+  VoltString = String( voltstring );
+  VoltString.trim();
+  
+  t_output = getTemp();
+  dtostrf( t_output, 4, 2, t_str );
+  
+  TempString = String( String(bs(_temp_str_1)) + String( t_str ) + String(bs(_temp_str_2)) );
   
   SMSmessage = String(pHBuffer);
   SMSmessage.trim();
-  SMSmessage = String( String(bs(_sms_str_1)) + SMSmessage + String(bs(_sms_str_2)) + voltstring );
+  SMSmessage = String( String(bs(_sms_str_1)) + SMSmessage + String(bs(_sms_str_2)) + VoltString + TempString );
   SMSmessage.trim();
   
   GSMon();
+  delay(30000);
   sms( SMSmessage );
+  delay(3000);
   GSMoff();
 
   delay(1800000); // every 20 minutes
