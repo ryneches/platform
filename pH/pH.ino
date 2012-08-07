@@ -27,7 +27,7 @@ prog_char sms_str_1[]                 PROGMEM = "The latest pH measurement is ";
 prog_char sms_str_2[]                 PROGMEM = ", battery voltage ";
 
 prog_char temp_str_1[]                PROGMEM = ", temp ";
-prog_char temp_str_2[]                PROGMEM = " C";
+prog_char temp_str_2[]                PROGMEM = "C";
 
 // table of pointers to back to strings in PROGMEM
 const char *string_table[] PROGMEM = {
@@ -163,12 +163,20 @@ char* bs( int strnum ) {
   return buffer;
 }
 
+// turn a float into a string, return pointer to string
+// float x     the floating point number
+// int p       number of digits
+char* f2s( float x, int p ) {
+  dtostrf( x, 4, 2, buffer );
+  return buffer;
+}
+
 // take a reading from the pH stamp
 // result stored in pH and pHbuffer
-void readpH() {
+void readpH( float t ) {
   pHSerial.listen();
   delay(10);
-  pHSerial.print( "23.24\r" );
+  pHSerial.print( String(f2s(t,4)) + "\r" );
   delay(1000);
   
   pHIndex = 0;
@@ -216,15 +224,10 @@ float getTemp() {
      average += t_samples[i];
   }
   average /= NUMSAMPLES;
- 
-  Serial.print("Average analog reading "); 
-  Serial.println(average);
- 
+  
   // convert the value to resistance
   average = 1023 / average - 1;
   average = SERIESRESISTOR / average;
-  Serial.print("Thermistor resistance "); 
-  Serial.println(average);
   
   float steinhart;
   steinhart = average / THERMISTORNOMINAL;     // (R/Ro)
@@ -358,9 +361,15 @@ void loop() {
   Serial.println( bs( _run_reading_message ) );
   delay(100);
 
+  // read the temperature
+  t_output = getTemp();
+  dtostrf( t_output, 4, 2, t_str );
+  
+  TempString = String( String(bs(_temp_str_1)) + String( t_str ) + String(bs(_temp_str_2)) );
+
   // take a pH reading
   pHledON();
-  readpH();
+  readpH( t_output );
   pHledOFF();  
 
   // read the analog in value:
@@ -376,11 +385,6 @@ void loop() {
   dtostrf( outputValue, 4, 2, voltstring );
   VoltString = String( voltstring );
   VoltString.trim();
-  
-  t_output = getTemp();
-  dtostrf( t_output, 4, 2, t_str );
-  
-  TempString = String( String(bs(_temp_str_1)) + String( t_str ) + String(bs(_temp_str_2)) );
   
   SMSmessage = String(pHBuffer);
   SMSmessage.trim();
